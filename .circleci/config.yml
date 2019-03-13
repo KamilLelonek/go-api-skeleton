@@ -1,0 +1,54 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.12
+        environment:
+          GO111MODULE: "on"
+      - image: circleci/postgres:9.6-alpine
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+
+      - run: gotestsum --junitfile unit-tests.xml
+      - store_test_results:
+          path: /tmp/test-results
+
+      - save_cache:
+          key: go-mod-v1-{{ checksum "go.sum" }}
+          paths:
+            - "/go/pkg/mod"
+
+      - restore_cache:
+          keys:
+            - v{{ .Environment.CACHE_VERSION }}-google-cache-{{ .Branch }}
+      - run:
+          name: Install Google Cloud SDK
+          command: |
+            if [ ! -d ~/google-cloud-sdk ]; then
+              export CLOUDSDK_CORE_DISABLE_PROMPTS=1
+              curl -sSL https://sdk.cloud.google.com | bash
+            fi
+            echo "export PATH=$PATH:~/google-cloud-sdk/bin" >> $BASH_ENV
+      - save_cache:
+          key: v{{ .Environment.CACHE_VERSION }}-google-cache-{{ .Branch }}
+          paths: ~/google-cloud-sdk
+
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run: ./scripts/docker-configure.sh
+
+      - run:
+          name: Configure environment
+          command: |
+            if [ $CIRCLE_BRANCH == "staging" ]; then
+              echo "export TF_PROJECT=skeleton-platform-tf-staging" >> $BASH_ENV
+            fi
+
+      - run: ./scripts/docker-build.sh
+      - run: ./scripts/deploy.sh
